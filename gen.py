@@ -12,6 +12,7 @@ import random
 # some constants
 L = 6
 RENDER_SCALE = 100
+SHAPES = ['1', '1', '2', '3', '4', '5', '5'] 
 
 # get the overlap value of two cell content
 def get_overlap(cell_contents):
