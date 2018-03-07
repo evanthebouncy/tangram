@@ -1,5 +1,5 @@
 import numpy as np
-import Image, ImageDraw
+from PIL import Image, ImageDraw
 import random
 
 # generate and render the tangram 
@@ -214,7 +214,7 @@ def gen_rand_sized_tangram(shapes):
   ss = [s for s in shapes]
   random.shuffle(ss)
   chosen_shapes = ss[:size]
-  print chosen_shapes
+  print(chosen_shapes)
   return gen_rand_tangram(chosen_shapes)
 
 # ========================== testing =====================
@@ -226,26 +226,26 @@ def test_render():
 
 def test_tree():
   p1 = Piece('1', 1, [])
-  print p1
+  print(p1)
   p2 = Piece('3', 4, [])
-  print p2
+  print(p2)
 
   p3 = Piece('H', 0, [p1, p2])
-  print p3
+  print(p3)
 
   p4 = Piece('V', 0, [p3, p1])
-  print p4
+  print(p4)
 
 def test_tangram():
   shapes = ['1', '1', '2', '3', '4', '5', '5'] 
   tangram = gen_rand_sized_tangram(shapes)
   board = tangram.to_board()
-  print board
+  print(board)
   render_board(board)
 
 if __name__ == "__main__":
   import time
-  print "CYKA BLYAT NAXUI"
+  print("CYKA BLYAT NAXUI")
   # test_render()
   # test_tree()
   test_tangram()

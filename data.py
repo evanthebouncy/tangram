@@ -28,14 +28,14 @@ def gen_train_embed_batch(n=20):
 # ==================== tests ===================
 def test_np():
   board = gen_rand_sized_tangram(SHAPES).to_board()
-  print board
-  print board_to_np(board)
+  print(board)
+  print(board_to_np(board))
 
 def test_gen_train_embed():
-  print gen_train_embed()
+  print(gen_train_embed())
 
   bs, other_bs, outs = gen_train_embed_batch()
-  print bs.shape, other_bs.shape, outs.shape
+  print(bs.shape, other_bs.shape, outs.shape)
 
 if __name__ == '__main__':
   test_np()
