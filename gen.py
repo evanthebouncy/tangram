@@ -134,7 +134,7 @@ class Piece:
     assert 0, "UNIMPLEMENTED PIZDEC"
 
   def __init__(self, p_type, p_orientation, p_args):
-    self.p_type, self.p_orientation, self.pargs = p_type, p_orientation, p_args
+    self.p_type, self.p_orientation, self.p_args = p_type, p_orientation, p_args
 
     # elementary pieces
 
