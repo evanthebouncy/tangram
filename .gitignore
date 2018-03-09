@@ -1,3 +1,5 @@
+*.mdl
+*.js
 *.pyc
 *.swp
 *.swo

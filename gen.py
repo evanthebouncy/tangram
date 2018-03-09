@@ -70,7 +70,7 @@ def v_combine(top_cell, bot_cell):
 def gen_rand_board():
   return np.random.randint(6, size=(L, L))
 
-def render_board(board):
+def render_board(board, name="board.png"):
 
   def board_2_coords(board):
     coords = []
@@ -99,14 +99,15 @@ def render_board(board):
     return coords
 
   def draw(coords):
-    im = Image.new('RGB', (RENDER_SCALE*L, RENDER_SCALE*L))
+    im = Image.new('RGBA', (RENDER_SCALE*L, RENDER_SCALE*L))
     draw = ImageDraw.Draw(im)
     # fill the default color to white
-    draw.polygon([(0,0),(RENDER_SCALE*L,0),(RENDER_SCALE*L,RENDER_SCALE*L),(0,RENDER_SCALE*L)], fill = 'white')
+    # draw.polygon([(0,0),(RENDER_SCALE*L,0),(RENDER_SCALE*L,RENDER_SCALE*L),(0,RENDER_SCALE*L)], fill = 'white')
+    # draw.rectangle((1, 1, RENDER_SCALE*L-1, RENDER_SCALE*L-1), fill=None, outline='black')
     for c in coords:
       c = RENDER_SCALE * np.array(c)
       draw.polygon([(c[0],c[1]),(c[2],c[3]),(c[4],c[5])], fill = 'black')
-    im.save("./renders/my_pic.png", 'PNG')
+    im.save("./renders/{}".format(name), 'PNG')
 
   coords = board_2_coords(board)
   draw(coords)
@@ -214,7 +215,7 @@ def gen_rand_sized_tangram(shapes):
   ss = [s for s in shapes]
   random.shuffle(ss)
   chosen_shapes = ss[:size]
-  print(chosen_shapes)
+  # print(chosen_shapes)
   return gen_rand_tangram(chosen_shapes)
 
 # ========================== testing =====================
