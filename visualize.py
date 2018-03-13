@@ -1,10 +1,11 @@
 from data import *
-from embed_mode import *
+#from embed_mode import *
+from algebraic_model import *
 from sklearn.manifold import TSNE
 
 if __name__ == '__main__':
   net = Net().cuda()
-  model_loc = './models/tan_embed.mdl'
+  model_loc = './models/tan_algebra.mdl'
   net.load_state_dict(torch.load(model_loc))
 
   # generate 100 random tangrams
