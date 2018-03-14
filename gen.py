@@ -1,6 +1,7 @@
 import numpy as np
 from PIL import Image, ImageDraw
 import random
+from constants import *
 
 # generate and render the tangram 
 
@@ -9,10 +10,8 @@ import random
 # ..       xx    x.    .x    xx      xx
 # ..       x.    xx    xx    .x      xx
 
-# some constants
-L = 6
+# render constants
 RENDER_SCALE = 100
-SHAPES = ['1', '1', '2', '3', '4', '5', '5'] 
 
 # get the overlap value of two cell content
 def get_overlap(cell_contents):
@@ -112,6 +111,10 @@ def render_board(board, name="board.png"):
   coords = board_2_coords(board)
   draw(coords)
 
+def np_to_prim(np_arr):
+  assert len(np_arr) == len(SHAPE_TYPES) * len(ORIENTATIONS)
+  print ('haha')
+
 # define the pieces
 class Piece:
 
@@ -128,10 +131,20 @@ class Piece:
         ret[y][x] = self.cell[y][x]
     return ret
 
-  def check_connected(self):
-    start = np.argmax(self.cell)
-    s_y, s_x = np.unravel_index(start, self.cell.shape)
-    assert 0, "UNIMPLEMENTED PIZDEC"
+  def piece_to_np(self):
+    p_type_np = [0.0, 0.0, 0.0]
+    prim_kind_np = [0.0 for _ in range(len(SHAPE_TYPES) * len(ORIENTATIONS))]
+    if self.p_type == 'H':
+      p_type_np = [0.0, 1.0, 0.0]
+    if self.p_type == 'V':
+      p_type_np = [0.0, 0.0, 1.0]
+    if self.p_type not in ['H', 'V']:
+      p_type_np = [1.0, 0.0, 0.0]
+      idxx = len(ORIENTATIONS) * SHAPE_TYPES.index(self.p_type) + (self.p_orientation - 1)
+      prim_kind_np[idxx] = 1.0
+
+    return np.array(p_type_np), np.array(prim_kind_np)
+
 
   def __init__(self, p_type, p_orientation, p_args):
     self.p_type, self.p_orientation, self.p_args = p_type, p_orientation, p_args
@@ -238,11 +251,14 @@ def test_tree():
   print(p4)
 
 def test_tangram():
-  shapes = ['1', '1', '2', '3', '4', '5', '5'] 
+  #shapes = ['1', '1', '2', '3', '4', '5', '5'] 
+  shapes = ['5'] 
   tangram = gen_rand_sized_tangram(shapes)
   board = tangram.to_board()
   print(board)
   render_board(board)
+
+  print (tangram.piece_to_np())
 
 if __name__ == "__main__":
   import time
