@@ -216,13 +216,13 @@ if __name__ == '__main__':
 
   # train the algebra for some iterations
   for i in range(10001):
-    if i < 10000 / 2:
+    if i < 4000:
       # freeze the weight, trian the algebra hard
       alg_cost = net.train_algebra(gen_train_compose_batch())
     else:
       # jointly train both the algebra and the embedding
       alg_cost = net.train_algebra(gen_train_compose_batch(), freeze=False)
-      emb_cost = net.train_embedding(gen_train_embed_batch())
+#      emb_cost = net.train_embedding(gen_train_embed_batch())
 
     if i % 1000 == 0:
       print ("===== a l g e b r a i c    a e s t h e t i c s ===== ", i)
