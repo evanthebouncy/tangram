@@ -8,8 +8,6 @@ import numpy as np
 import torch.nn.functional as F
 from constants import *
 
-large_hidden = 6 * n_hidden
-
 def to_torch(x, req = False):
   x = Variable(torch.from_numpy(x).type(torch.cuda.FloatTensor), requires_grad = req)
   return x
@@ -193,14 +191,11 @@ class ANet(nn.Module):
     for param in self.parameters():
       param.requires_grad = False
     # create 2 candidates
-    cand_arg = to_torch(np.random.uniform(low=0.0, high=1.0, size=(1,n_hidden)), True)
+    cand_arg = to_torch(np.random.uniform(low=-1.0, high=1.0, size=(1,n_hidden)), True)
     optim = torch.optim.Adam([cand_arg], lr=0.001)
     for i in range(10000):
       optim.zero_grad()
       arg = F.sigmoid(cand_arg)
-
-      return arg
-
       cost = self.auto_enc_cost(x, self.dec(arg))
       cost.backward()
       optim.step()

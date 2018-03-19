@@ -11,7 +11,11 @@ def visualize_interpolation(net, e1, e2):
     e_middle = e1 + delta * i
     render_board(net.dec_to_board(net.dec(e_middle)), "interpo_{}.png".format(i))
 
-
+def visualize_distr(net):
+  for i in range(20):
+    cand_arg = to_torch(np.random.uniform(low=-1.0, high=1.0, size=(1,n_hidden)))
+    arg = F.sigmoid(cand_arg)
+    render_board(net.dec_to_board(net.dec(arg)), "distr_sample_{}.png".format(i))
 
 def visualize_algebra(net):
   # train the algebraic cost
@@ -87,13 +91,33 @@ def test_modality(net):
   render_board(net.dec_to_board(net.dec(b_alt)), "alt_render.png")
   visualize_interpolation(net, b_alt, b_emb)
 
+def test_1step_dec(anet, b, xxx):
+  b = to_torch(b[1:2, :])
+  print ("did we do it boys?")
+  b_board    = anet.dec_to_board(anet.channel_last(b)[0])
+  render_board(b_board,    "{}_decompose_target.png".format(xxx))
+
+  arg1, arg2, rec = anet.h_decompose(b)
+
+  print (arg1.size())
+  print (arg2.size())
+  print (rec.size())
+
+  arg1_board = anet.dec_to_board(arg1[0])
+  arg2_board = anet.dec_to_board(arg2[0])
+  rec_board = anet.dec_to_board(rec[0])
+  render_board(arg1_board, "{}_decompose_arg1.png".format(xxx))
+  render_board(arg2_board, "{}_decompose_arg2.png".format(xxx))
+  render_board(rec_board,  "{}_decompose_rec.png".format(xxx))
+
 if __name__ == '__main__':
   net = ANet().cuda()
   model_loc = './models/tan_algebra.mdl'
   net.load_state_dict(torch.load(model_loc))
   # visualize(net)
+  # visualize_distr(net)
   # visualize_embedding(net)
-  # visualize_algebra(net)
+  visualize_algebra(net)
   # test_robust(net)
-  # test_modality(net)
+  #test_modality(net)
 

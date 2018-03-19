@@ -252,8 +252,14 @@ def test_tree():
 
 def test_tangram():
   #shapes = ['1', '1', '2', '3', '4', '5', '5'] 
-  shapes = ['5'] 
-  tangram = gen_rand_sized_tangram(shapes)
+  shapes = ['1','3', '4', '5'] 
+  tangram = gen_rand_tangram(shapes)
+  print ('type')
+  print (tangram.p_type)
+  print ('arg1')
+  print (tangram.p_args[0])
+  print ('arg2')
+  print (tangram.p_args[1])
   board = tangram.to_board()
   print(board)
   render_board(board)
