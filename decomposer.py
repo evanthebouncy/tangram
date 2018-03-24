@@ -12,7 +12,7 @@ from constants import *
 
 from algebraic_model import *
 
-n_decompose = 4
+n_decompose = 8
 
 class INet(nn.Module):
 
@@ -114,13 +114,14 @@ class INet(nn.Module):
 
     print(max_mus.size())
 
-    arg1 = max_mus.narrow(1,0,n_hidden)
-    arg2 = max_mus.narrow(1,n_hidden,n_hidden)
+    return torch.split(max_mus, n_hidden, dim=1)
+    # arg1 = max_mus.narrow(1,0,n_hidden)
+    # arg2 = max_mus.narrow(1,n_hidden,n_hidden)
 
-    print (arg1.size())
-    print (arg2.size())
+    # print (arg1.size())
+    # print (arg2.size())
 
-    return arg1, arg2
+    # return arg1, arg2
 
   def inv_cost(self, inv_cls, inv_mus, inv_vas, arg1_e, arg2_e):
     '''

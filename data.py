@@ -8,6 +8,12 @@ def board_to_np(board):
       ret[yy][xx][int(board[yy][xx])] = 1
   return np.transpose(ret, (2,0,1))
 
+# put into numpy shape the actions
+def action_to_np(act):
+  ret = np.zeros(shape=len(ACTIONS))
+  ret[ACTIONS.index(act)] = 1.0
+  return ret
+
 def gen_train_embed_batch(n=20):
   return np.array([board_to_np(gen_rand_sized_tangram(SHAPES).to_board())\
                    for _ in range(n)])
@@ -63,6 +69,61 @@ def gen_train_compose_batch(n=20):
          (np.array(h_arg1), np.array(h_arg2), np.array(h_result)),\
          (np.array(v_arg1), np.array(v_arg2), np.array(v_result))
 
+def gen_train_planner():
+  tangram = gen_rand_tangram(SHAPES)
+  actions = []
+  h_compose = []
+  v_compose = []
+
+  def gen_helper(gram):
+    if gram.p_type == 'H':
+      arg1, arg2 = gram.p_args
+      h_compose.append((arg1.to_board(), arg2.to_board(), gram.to_board()))
+      gen_helper(arg1)
+      gen_helper(arg2)
+      actions.append((gram.to_board(), 'H'))
+      return
+    if gram.p_type == 'V':
+      arg1, arg2 = gram.p_args
+      v_compose.append((arg1.to_board(), arg2.to_board(), gram.to_board()))
+      gen_helper(arg1)
+      gen_helper(arg2)
+      actions.append((gram.to_board(), 'V'))
+      return
+    if gram.p_type not in ['H', 'V']:
+      actions.append((gram.to_board(), (gram.p_type, gram.p_orientation)))
+      return
+    assert 0, "This should never happen cyka blyat"
+
+  gen_helper(tangram)
+
+  return actions, h_compose, v_compose
+
+def gen_train_planner_batch(n=20):
+  stuffs = [gen_train_planner() for _ in range(n)]
+  embeds = []
+  actions = []
+  h_arg1, h_arg2, h_result = [],[],[]
+  v_arg1, v_arg2, v_result = [],[],[]
+
+  for stuff in stuffs:
+    input_actions, h_composes, v_composes = stuff
+    embeds.extend([board_to_np(x[0]) for x in input_actions])
+    actions.extend([action_to_np(x[1]) for x in input_actions])
+    for h_ar1, h_ar2, h_res in h_composes:
+      h_arg1.append(  board_to_np(h_ar1))
+      h_arg2.append(  board_to_np(h_ar2))
+      h_result.append(board_to_np(h_res))
+    for v_ar1, v_ar2, v_res in v_composes:
+      v_arg1.append(  board_to_np(v_ar1))
+      v_arg2.append(  board_to_np(v_ar2))
+      v_result.append(board_to_np(v_res))
+
+
+  return np.array(embeds), np.array(actions),\
+         (np.array(h_arg1), np.array(h_arg2), np.array(h_result)),\
+         (np.array(v_arg1), np.array(v_arg2), np.array(v_result))
+
 # ==================== tests ===================
 def test_np():
   board = gen_rand_sized_tangram(SHAPES).to_board()
@@ -80,15 +141,36 @@ def test_compose():
   print(len(vv))
 
 def test_compose_batch():
-  embeds, h_train, v_train = gen_train_compose_batch()
+  actions, embeds, h_train, v_train = gen_train_compose_batch()
   print(embeds.shape)
   for xx in h_train:
     print(xx.shape)
   for yy in v_train:
     print(yy.shape)
 
+def test_planner():
+  action, hh, vv = gen_train_planner()
+  print(action)
+  print(hh)
+  print(vv)
+  print(len(action))
+  print(len(hh))
+  print(len(vv))
+
+def test_planner_batch():
+  embeds, actions, h_train, v_train = gen_train_planner_batch()
+  print(embeds.shape)
+  print(actions.shape)
+  for xx in h_train:
+    print(xx.shape)
+  for yy in v_train:
+    print(yy.shape)
+
+
 if __name__ == '__main__':
   #test_np()
   #test_gen_train_embed()
   #test_compose()
-  test_compose_batch()
+  #test_compose_batch()
+  #test_planner()
+  test_planner_batch()
