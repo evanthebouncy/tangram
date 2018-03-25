@@ -18,6 +18,7 @@ class PNet(nn.Module):
   it holds these following functions:
   enc: takes in the pictoral description and encode it into the latent space
   invert: takes in the latent representation and output 
+  abstr_op: takes in two latent variables e1 and e2 compute the forward composition
   '''
 
   def __init__(self):
@@ -154,7 +155,6 @@ class PNet(nn.Module):
     op_pred = ACTIONS[np.random.choice(range(len(ACTIONS)), p=op_pred)]
 
     # if action is atomic / primitive return the action
-    op_pred = 'H'
     if op_pred not in ['H', 'V']:
       return op_pred, None, None
 
@@ -175,44 +175,84 @@ class PNet(nn.Module):
     assert 0
 
   # ====================== TRAINING PROCEDURE =================== #
-  def train_algebra(self, ehv_batch):
-    self.optimizer.zero_grad()
-    # train the algebraic cost
-    bb, h_batch, v_batch = ehv_batch
+  '''
+  the given cost is considered
+  for every node in a tangram treeC . . .
+  op_pred(enc(x)) = op  (either primitive or composition operator)
+  for every composition x = x1 op x2 . . .
+  maximize log-likelihoood(enc(x), enc(x1), enc(x2))
+  enforce forward function abstr_op(op, enc(x1), enc(x2)) = enc(x)
+  '''
 
-    # Auto Encodings
-    b = to_torch(bb)
-    # embedding has shape [20 x 20] = [batch x hidden]
-    # reconstruction should have shape [20 x 6 * 6 x 6]
-    b_rec = self.dec(self.enc(b))
-    embed_cost = self.auto_enc_cost(b, b_rec)
+  def inv_cost(self, inv_cls, inv_mus, inv_vas, arg1_e, arg2_e):
+    '''
+    compute the log likelihood of data given the generative gaussian mixture model
+    as the cost and attempt to reduce the cost here I suppose
+    '''
+    arg12 = torch.cat((arg1_e, arg2_e), dim=1)
+    #print ("cat emb arg size ", arg12.size())
+    cl_mu_vas = list(zip(inv_cls, inv_mus, inv_vas))
+    #print (len(cl_mu_vas))
 
-    # H operator
-    h_arg1, h_arg2, h_result = h_batch
-    h_arg1, h_arg2, h_result = to_torch(h_arg1), to_torch(h_arg2), to_torch(h_result)
-    h_pred = self.abstr_h(self.enc(h_arg1), self.enc(h_arg2))
-    h_pred_dec = self.dec(h_pred)
-    h_cost = self.auto_enc_cost(h_result, h_pred_dec)
-
-    # V operator
-    v_arg1, v_arg2, v_result = v_batch
-    v_arg1, v_arg2, v_result = to_torch(v_arg1), to_torch(v_arg2), to_torch(v_result)
-    v_pred = self.abstr_v(self.enc(v_arg1), self.enc(v_arg2))
-    v_pred_dec = self.dec(v_pred)
-    v_cost = self.auto_enc_cost(v_result, v_pred_dec)
-
-    cost = embed_cost + h_cost + v_cost
-    cost.backward()
-    self.optimizer.step()
-
-    return embed_cost, h_cost, v_cost
-
-  # ============================ HALPERS ============================ #
+    # compute probability for arg12 for each class, and sum it together
+    prob_js = []
+    for cl_mu_va in cl_mu_vas:
+      cl, mu, va = cl_mu_va
+      cl = cl.contiguous().view(-1)
+      norm_const = (1 / torch.sqrt(torch.prod(va, dim=1)))
+      exp_part = torch.sum(-(1/2) * (arg12 - mu) * (1 / va) * (arg12 - mu), dim=1)
+      prob_j = cl * norm_const * torch.exp(exp_part)
+      prob_js.append(prob_j)
+    
+    # add small constant so the gradient does not EXPLOD
+    probs = sum(prob_js)
+    smol_const = to_torch(np.array([1e-6]))
+    probs = probs + smol_const.expand(probs.size())
+    neg_log_probs = -torch.sum(torch.log(probs))
+    return neg_log_probs
 
   def embed_dist_cost(self, e_target, e):
     diff = e_target - e
     cost_value = torch.sum(torch.pow(diff, 2))
     return cost_value
+
+  def op_cost(self, op_target, op_pred):
+    assert op_target.size() == op_pred.size()
+    logged_op_pred = torch.log(op_pred)
+    cost_value = -torch.sum(op_target * logged_op_pred)
+    return cost_value
+
+
+  def train_planning(self, ehv_batch):
+    self.optimizer.zero_grad()
+    # batch of tangrams, corresponding actions, h_batch and v_batch
+    bb, aa, h_batch, v_batch = ehv_batch
+
+    # Auto Encodings
+    bb, aa = to_torch(bb), to_torch(aa)
+    # embedding has shape [20 x 20] = [batch x hidden]
+    # reconstruction should have shape [20 x 6 * 6 x 6]
+    aa_pred = self.predict_op(self.enc(bb))
+    pred_cost = self.op_cost(aa, aa_pred)
+
+    # H operator
+    # step 1: the forward cost of the H operator
+    h_arg1, h_arg2, h_result = h_batch
+    h_arg1, h_arg2, h_result = to_torch(h_arg1), to_torch(h_arg2), to_torch(h_result)
+    e_h_arg1, e_h_arg2, e_h_result = self.enc(h_arg1), self.enc(h_arg2), self.enc(h_result)
+    h_pred = self.abstr_op('H', e_h_arg1, e_h_arg2)
+    h_forward_cost = self.embed_dist_cost(self.enc(h_result), h_pred)
+    # step 2: the reverse cost of the H operator
+    h_inv_cls, h_inv_mus, h_inv_vas = self.invert_latent('H', e_h_result)
+    h_inv_cost = self.inv_cost(h_inv_cls, h_inv_mus, h_inv_vas, e_h_arg1, e_h_arg2)
+
+    cost = pred_cost + h_forward_cost + h_inv_cost
+    cost.backward()
+    self.optimizer.step()
+
+    return cost
+
+  # ============================ HALPERS ============================ #
     
 
 if __name__ == '__main__':
@@ -228,14 +268,14 @@ if __name__ == '__main__':
   res = net.sample_decompose(e)
   print (res)
 
-  '''
   # train the planner for some iterations
   for i in range(100001):
-    alg_cost = net.train_algebra(gen_train_compose_batch())
+    cost = net.train_planning(gen_train_planner_batch())
     if i % 1000 == 0:
       print ("===== a l g e b r a i c    a e s t h e t i c s ===== ", i)
-      print("cost ", alg_cost)
+      print("cost ", cost)
       torch.save(net.state_dict(), net.model_loc) 
+    '''
 
       bbb, h_batch, v_batch = gen_train_compose_batch()
       bbb = to_torch(bbb)
