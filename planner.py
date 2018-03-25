@@ -246,11 +246,22 @@ class PNet(nn.Module):
     h_inv_cls, h_inv_mus, h_inv_vas = self.invert_latent('H', e_h_result)
     h_inv_cost = self.inv_cost(h_inv_cls, h_inv_mus, h_inv_vas, e_h_arg1, e_h_arg2)
 
-    cost = pred_cost + h_forward_cost + h_inv_cost
+    # V operator
+    # step 1: the forward cost of the V operator
+    v_arg1, v_arg2, v_result = v_batch
+    v_arg1, v_arg2, v_result = to_torch(v_arg1), to_torch(v_arg2), to_torch(v_result)
+    e_v_arg1, e_v_arg2, e_v_result = self.enc(v_arg1), self.enc(v_arg2), self.enc(v_result)
+    v_pred = self.abstr_op('V', e_v_arg1, e_v_arg2)
+    v_forward_cost = self.embed_dist_cost(self.enc(v_result), v_pred)
+    # step 2: the reverse cost of the H operator
+    v_inv_cls, v_inv_mus, v_inv_vas = self.invert_latent('V', e_v_result)
+    v_inv_cost = self.inv_cost(v_inv_cls, v_inv_mus, v_inv_vas, e_v_arg1, e_v_arg2)
+
+    cost = pred_cost + h_forward_cost + h_inv_cost + v_forward_cost + v_inv_cost
     cost.backward()
     self.optimizer.step()
 
-    return cost
+    return pred_cost, h_forward_cost, h_inv_cost, v_forward_cost, v_inv_cost
 
   # ============================ HALPERS ============================ #
     
