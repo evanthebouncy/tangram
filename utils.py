@@ -1,3 +1,5 @@
+import torch
+from torch.autograd import Variable
 def to_torch(x, req = False):
   x = Variable(torch.from_numpy(x).type(torch.cuda.FloatTensor), requires_grad = req)
   return x

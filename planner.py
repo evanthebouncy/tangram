@@ -68,7 +68,7 @@ class PNet(nn.Module):
     x = F.relu(self.enc_conv1(x))
     # If the size is a square you can only specify a single number
     x = F.relu(self.enc_conv2(x))
-    x = x.view(-1, self.num_flat_features(x))
+    x = x.view(-1, num_flat_features(x))
     x = F.relu(self.enc_fc1(x))
     e = F.sigmoid(self.enc_fc2(x))
     return e
@@ -98,7 +98,7 @@ class PNet(nn.Module):
     output a distribution of actions on what is to be done on e:
     one class of primitives / H / V
     '''
-    return F.softmax(self.op_fc(e))
+    return F.softmax(self.op_fc(e), dim=1)
 
   def invert_latent(self, op_type, e):
     '''
@@ -137,10 +137,42 @@ class PNet(nn.Module):
     class_means = [mu(e) for mu in inv_map[op_type]['inv_mu']]
 
     # just 1 for variance for now
-    class_vars  = [to_torch(np.array([1.0])).expand(class_means[0].size()) for va in self.inv_h_vars]
+    class_vars  = [to_torch(np.array([1.0])).expand(class_means[0].size()) for _ in range(n_components)]
 
     return class_probs, class_means, class_vars
     
+  def sample_decompose(self, e):
+    '''
+    takes in a hidden vector and sample the primitive actions and 
+    the latent decompositions (if action is H or V)
+    this is only done in test time so batch size is just 1 for now
+    '''
+    # prediction an action 
+    # there are total of 22 actions to predict
+    op_pred = self.predict_op(e)
+    op_pred = op_pred.data.cpu().numpy()[0]
+    op_pred = ACTIONS[np.random.choice(range(len(ACTIONS)), p=op_pred)]
+
+    # if action is atomic / primitive return the action
+    op_pred = 'H'
+    if op_pred not in ['H', 'V']:
+      return op_pred, None, None
+
+    # otherwise, perform decomposition into the sub-goals
+    else:
+      # predict class, mean, and variance for the decomposed vector e1 e2
+      cls, mus, vas = self.invert_latent(op_pred, e)
+      # step 1: sample a class
+      cls = torch.cat(cls, dim=1)
+      cl_prob = cls[0].data.cpu().numpy()
+      cl = np.random.choice(range(n_components), p=cl_prob)
+      # step 2: conditioned on this class, select the class specific mean and var
+      cl_mu, cl_va = mus[cl][0].data.cpu().numpy(), vas[cl][0].data.cpu().numpy()
+      e1e2 = np.random.normal(cl_mu, cl_va)
+      e1e2 = to_torch(e1e2).unsqueeze(0)
+      e1, e2 = torch.split(e1e2, n_hidden, dim=1)
+      return op_pred, e1, e2
+    assert 0
 
   # ====================== TRAINING PROCEDURE =================== #
   def train_algebra(self, ehv_batch):
@@ -187,9 +219,17 @@ if __name__ == '__main__':
 
   print ("WORDS OF ENCOURAGEMENTTT ")
   net = PNet().cuda()
+  xx, actions, h_batch, v_batch = gen_train_planner_batch()
+
+  xx, actions = to_torch(xx), to_torch(actions)
+
+  e = net.enc(xx)
+
+  res = net.sample_decompose(e)
+  print (res)
 
   '''
-  # train the algebra for some iterations
+  # train the planner for some iterations
   for i in range(100001):
     alg_cost = net.train_algebra(gen_train_compose_batch())
     if i % 1000 == 0:
