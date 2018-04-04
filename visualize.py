@@ -1,6 +1,7 @@
 from data import *
 from embed_mode import *
 from algebraic_model import *
+from planner import *
 from sklearn.manifold import TSNE
 from data import *
 
@@ -111,13 +112,14 @@ def test_1step_dec(anet, b, xxx):
   render_board(rec_board,  "{}_decompose_rec.png".format(xxx))
 
 if __name__ == '__main__':
-  net = ANet().cuda()
-  model_loc = './models/tan_algebra.mdl'
-  net.load_state_dict(torch.load(model_loc))
+  pnet = PNet().cuda()
+  model_loc = './models/planner.mdl'
+  pnet.load_state_dict(torch.load(model_loc))
+  print ("W O R D S    O F    E N C O U R A G E M E N T")
   # visualize(net)
   # visualize_distr(net)
   # visualize_embedding(net)
-  visualize_algebra(net)
+  # visualize_algebra(pnet)
   # test_robust(net)
   #test_modality(net)
 

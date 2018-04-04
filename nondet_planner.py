@@ -9,11 +9,14 @@ import torch.nn.functional as F
 from constants import *
 from utils import *
 
-n_components = 2
+R = 30.0
 
-class PNet(nn.Module):
+class NPNet(nn.Module):
   '''
-  the PNet perform planning decomposing a goal into actionable tangrams and assemble!
+  the NPNet perform planning decomposing a goal into actionable tangrams and assemble!
+  captures Non Determinism by trying to do away with it and remember 
+  
+  ONE TRUE WAE
 
   it holds these following functions:
   enc: takes in the pictoral description and encode it into the latent space
@@ -22,7 +25,7 @@ class PNet(nn.Module):
   '''
 
   def __init__(self):
-    super(PNet, self).__init__()
+    super(NPNet, self).__init__()
     # for encding
     # 6 input image channel, 6 output channels, 2x2 square convolution
     self.enc_conv1 = nn.Conv2d(6, 12, 2)
@@ -43,21 +46,40 @@ class PNet(nn.Module):
 
     # for predicting the e1 e2, one per kind of decomposition
     self.inv_h_fc = nn.Linear(n_hidden, large_hidden)
-    self.inv_h_class = nn.Linear(large_hidden, n_components)
-    self.inv_h_means = nn.ModuleList([nn.Linear(large_hidden, 2 * n_hidden)\
-        for _ in range(n_components)])
-    #    self.inv_h_vars  = nn.ModuleList([nn.Linear(large_hidden, 2 * n_hidden)\
-    #        for _ in range(n_decompose)])
+    self.inv_h_decomp = nn.Linear(large_hidden, 2 * n_hidden)
+    self.inv_h_radius = nn.Linear(large_hidden, 1)
 
     self.inv_v_fc = nn.Linear(n_hidden, large_hidden)
-    self.inv_v_class = nn.Linear(large_hidden, n_components)
-    self.inv_v_means = nn.ModuleList([nn.Linear(large_hidden, 2 * n_hidden)\
-        for _ in range(n_components)])
-    # self.inv_v_vars  = nn.ModuleList([nn.Linear(large_hidden, 2 * n_hidden)\
-    #     for _ in range(n_decompose)])
+    self.inv_v_decomp = nn.Linear(large_hidden, 2 * n_hidden)
+    self.inv_v_radius = nn.Linear(large_hidden, 1)
 
-    self.optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
-    self.model_loc = './models/planner.mdl'
+    self.island_optimizer = torch.optim.Adam(
+      list(self.enc_conv1.parameters())+
+      list(self.enc_conv2.parameters())+
+      list(self.enc_fc1.parameters())+
+      list(self.enc_fc2.parameters())+
+      list(self.h_fc1.parameters())+
+      list(self.h_fc2.parameters())+
+      list(self.v_fc1.parameters())+
+      list(self.v_fc2.parameters())+
+      list(self.op_fc.parameters())+
+      list(self.inv_h_fc.parameters())+
+      list(self.inv_h_decomp.parameters())+
+      list(self.inv_v_fc.parameters())+
+      list(self.inv_v_decomp.parameters()),
+      lr=0.001)
+
+    # self.optimizer = torch.optim.Adam(self.parameters(), lr=0.001)
+    
+    self.inv_optimizer = torch.optim.Adam(
+      list(self.inv_h_fc.parameters())+
+      list(self.inv_h_decomp.parameters())+
+      list(self.inv_h_radius.parameters())+
+      list(self.inv_v_fc.parameters())+
+      list(self.inv_v_decomp.parameters())+
+      list(self.inv_v_radius.parameters()),
+      lr=0.001)
+    self.model_loc = './models/nplanner.mdl'
 
   # ========================== OPERATORS ============================ #
   def enc(self, x):
@@ -114,33 +136,23 @@ class PNet(nn.Module):
     inv_map = {
         'H' : {
             'inv_fc' : self.inv_h_fc,
-            'inv_c' : self.inv_h_class,
-            'inv_mu' : self.inv_h_means,
-            'inv_va' : 'ignore for now',
+            'inv_decomp' : self.inv_h_decomp,
+            'inv_radius' : self.inv_h_radius,
           },
         'V' : {
             'inv_fc' : self.inv_v_fc,
-            'inv_c' : self.inv_v_class,
-            'inv_mu' : self.inv_v_means,
-            'inv_va' : 'ignore for now',
+            'inv_decomp' : self.inv_v_decomp,
+            'inv_radius' : self.inv_v_radius,
           }
         }
     
     # we first enlarge the encoding to a large hidden dimension to get ready
-    e = F.relu(inv_map[op_type]['inv_fc'](e))
+    e_large = F.relu(inv_map[op_type]['inv_fc'](e))
+    # decode out the decomposition and radius estimate
+    e1e2 = inv_map[op_type]['inv_decomp'](e_large) 
+    r = inv_map[op_type]['inv_radius'](e_large) + R
 
-    # make the class/mixture probabilities and normalize
-    class_probs = inv_map[op_type]['inv_c'](e)
-    class_probs = F.softmax(class_probs, dim=1)
-    class_probs = torch.split(class_probs, 1, 1)
-
-    # make the class mean and leave it as is
-    class_means = [mu(e) for mu in inv_map[op_type]['inv_mu']]
-
-    # just 1 for variance for now
-    class_vars  = [to_torch(np.array([1.0])).expand(class_means[0].size()) for _ in range(n_components)]
-
-    return class_probs, class_means, class_vars
+    return e1e2, r
     
   def sample_decompose(self, e):
     '''
@@ -152,9 +164,6 @@ class PNet(nn.Module):
     # there are total of 22 actions to predict
     op_pred = self.predict_op(e)
     op_pred = op_pred.data.cpu().numpy()[0]
-    print(ACTIONS)
-    print("op_pred ", op_pred)
-    print("max op_pred ", np.max(op_pred))
     op_pred = ACTIONS[np.random.choice(range(len(ACTIONS)), p=op_pred)]
 
     # if action is atomic / primitive return the action
@@ -163,22 +172,11 @@ class PNet(nn.Module):
 
     # otherwise, perform decomposition into the sub-goals
     else:
-      # predict class, mean, and variance for the decomposed vector e1 e2
-      cls, mus, vas = self.invert_latent(op_pred, e)
-      # step 1: sample a class
-      cls = torch.cat(cls, dim=1)
-      cl_prob = cls[0].data.cpu().numpy()
-      print("cl_prob ", cl_prob)
-      cl = np.random.choice(range(n_components), p=cl_prob)
-      # step 2: conditioned on this class, select the class specific mean and var
-      cl_mu, cl_va = mus[cl][0].data.cpu().numpy(), vas[cl][0].data.cpu().numpy()
-      # e1e2 = np.random.normal(cl_mu, cl_va)
-      # TODO: is this part really right?!?!?!
-      e1e2 = cl_mu
-      e1e2 = to_torch(e1e2).unsqueeze(0)
+      e1e2, r = self.invert_latent(op_pred, e)
+      print ("radius 4Head ", r)
       e1, e2 = torch.split(e1e2, n_hidden, dim=1)
       return op_pred, e1, e2
-    assert 0
+    assert 0, "should not happen blyat!"
 
   # ====================== TRAINING PROCEDURE =================== #
   '''
@@ -186,42 +184,65 @@ class PNet(nn.Module):
   for every node in a tangram treeC . . .
   op_pred(enc(x)) = op  (either primitive or composition operator)
   for every composition x = x1 op x2 . . .
-  maximize log-likelihoood(enc(x), enc(x1), enc(x2))
+  try to latch on to a particular decomposition
   enforce forward function abstr_op(op, enc(x1), enc(x2)) = enc(x)
   '''
 
-  def inv_cost(self, inv_cls, inv_mus, inv_vas, arg1_e, arg2_e):
+  def inv_cost(self, e1e2, r, arg1_e, arg2_e):
     '''
-    compute the log likelihood of data given the generative gaussian mixture model
-    as the cost and attempt to reduce the cost here I suppose
+    take in a proposed decomposition e1e2 and the truth arg1_e arg2_e
+    return the e1e2 update cost and the radius cost
+    conditioned on how close e1e2 are to the arg1_e,arg2_e
     '''
     arg12 = torch.cat((arg1_e, arg2_e), dim=1)
-    #print ("cat emb arg size ", arg12.size())
-    cl_mu_vas = list(zip(inv_cls, inv_mus, inv_vas))
-    #print (len(cl_mu_vas))
+    diff_norm = (arg12 - e1e2).norm(dim=1)
+    #print ("diff norm ", diff_norm)
+    #print ("radius ", r)
 
-    # compute probability for arg12 for each class, and sum it together
-    prob_js = []
-    for cl_mu_va in cl_mu_vas:
-      cl, mu, va = cl_mu_va
-      cl = cl.contiguous().view(-1)
-      # norm_const = (1 / torch.sqrt(torch.prod(va, dim=1)))
-      norm_const = 1.0
-      exp_part = torch.sum(-(1/2) * (arg12 - mu) * (1 / va) * (arg12 - mu), dim=1)
-      prob_j = cl * norm_const * torch.exp(exp_part)
-      prob_js.append(prob_j)
-    
-    # add small constant so the gradient does not EXPLOD
-    probs = sum(prob_js)
-    smol_const = to_torch(np.array([1e-6]))
-    probs = probs + smol_const.expand(probs.size())
-    neg_log_probs = -torch.sum(torch.log(probs))
-    return neg_log_probs
+    diff_norm_np = diff_norm.data.cpu().numpy()
+    r_np = r.view(-1).data.cpu().numpy()
+    within_r = diff_norm_np < r_np
+    #print ("within r ", within_r)
+
+    # set up the radius target
+    r_np = r.view(-1).data.cpu().numpy()
+    bigger_r = r_np + 0.001
+    smaller_r = r_np * 0.999
+    #print ("bigger r ", bigger_r)
+    #print ("smaller r ", smaller_r)
+    #print ("within r ", within_r)
+    r_target = np.where(within_r, smaller_r, bigger_r)
+    r_target = to_torch(r_target).unsqueeze(1)
+    #print (r_target)
+
+    # set up the treasure target
+    arg12_np = arg12.data.cpu().numpy()
+    e1e2_np = e1e2.data.cpu().numpy()
+    within_r_extend = np.expand_dims(within_r, axis=1)
+    within_r_extend = np.repeat(within_r_extend, n_hidden * 2, axis=1)
+    # if random.random() < 0.01:
+    #   print (within_r_extend)
+    # if the treasure is within the radius r, we go to the arg12 target, else dont move
+    arg12_target = to_torch(np.where(within_r_extend, arg12_np, e1e2_np))
+    #print (e1e2)
+    #print (arg12)
+    #print (arg12_target)
+
+    # treasure_cost = torch.sum((arg12_target- e1e2).norm(dim=1) / e1e2.norm(dim=1))
+    treasure_cost = torch.sum((arg12_target- e1e2).norm(dim=1))
+    radius_cost = self.embed_dist_cost(r_target, r)
+    # print ("treasure cost ", treasure_cost)
+    # print ("radius cost ", radius_cost)
+    # print (torch.sum(diff_norm), radius_cost)
+
+    # return torch.sum(diff_norm) + radius_cost
+    return torch.sum(diff_norm), treasure_cost + radius_cost
+    return treasure_cost + radius_cost
 
   def embed_dist_cost(self, e_target, e):
     diff = e_target - e
-    # some crazy ass hack right here O_O
-    cost_value = torch.log(0.1 + torch.mean(torch.pow(diff, 2)))
+    # cost_value = torch.sum(torch.pow(diff, 2))
+    cost_value = torch.sum(diff.norm(dim=1))
     return cost_value
 
   def op_cost(self, op_target, op_pred):
@@ -230,46 +251,57 @@ class PNet(nn.Module):
     cost_value = -torch.sum(op_target * logged_op_pred)
     return cost_value
 
-
-  def train_planning(self, ehv_batch):
-    self.optimizer.zero_grad()
+  def get_costs(self, ehv_batch):
     # batch of tangrams, corresponding actions, h_batch and v_batch
     bb, aa, h_batch, v_batch = ehv_batch
 
     # Encoding and action production
     bb, aa = to_torch(bb), to_torch(aa)
-    # embedding has shape [20 x 20] = [batch x hidden]
-    # reconstruction should have shape [20 x 6 * 6 x 6]
     aa_pred = self.predict_op(self.enc(bb))
     pred_cost = self.op_cost(aa, aa_pred)
 
     # H operator
-    # step 1: the forward cost of the H operator
     h_arg1, h_arg2, h_result = h_batch
     h_arg1, h_arg2, h_result = to_torch(h_arg1), to_torch(h_arg2), to_torch(h_result)
     e_h_arg1, e_h_arg2, e_h_result = self.enc(h_arg1), self.enc(h_arg2), self.enc(h_result)
+    # step 1: the forward cost of the H operator
     h_pred = self.abstr_op('H', e_h_arg1, e_h_arg2)
     h_forward_cost = self.embed_dist_cost(self.enc(h_result), h_pred)
     # step 2: the reverse cost of the H operator
-    h_inv_cls, h_inv_mus, h_inv_vas = self.invert_latent('H', e_h_result)
-    h_inv_cost = self.inv_cost(h_inv_cls, h_inv_mus, h_inv_vas, e_h_arg1, e_h_arg2)
+    h_inv_e1e2, h_inv_r = self.invert_latent('H', e_h_result)
+    h_inv_cost, h_inv_cost_pl = self.inv_cost(h_inv_e1e2, h_inv_r, e_h_arg1, e_h_arg2)
 
     # V operator
-    # step 1: the forward cost of the V operator
     v_arg1, v_arg2, v_result = v_batch
     v_arg1, v_arg2, v_result = to_torch(v_arg1), to_torch(v_arg2), to_torch(v_result)
     e_v_arg1, e_v_arg2, e_v_result = self.enc(v_arg1), self.enc(v_arg2), self.enc(v_result)
+    # step 1: the forward cost of the V operator
     v_pred = self.abstr_op('V', e_v_arg1, e_v_arg2)
     v_forward_cost = self.embed_dist_cost(self.enc(v_result), v_pred)
-    # step 2: the reverse cost of the H operator
-    v_inv_cls, v_inv_mus, v_inv_vas = self.invert_latent('V', e_v_result)
-    v_inv_cost = self.inv_cost(v_inv_cls, v_inv_mus, v_inv_vas, e_v_arg1, e_v_arg2)
+    # step 2: the reverse cost of the V operator
+    v_inv_e1e2, v_inv_r = self.invert_latent('V', e_v_result)
+    v_inv_cost, v_inv_cost_pl = self.inv_cost(v_inv_e1e2, v_inv_r, e_v_arg1, e_v_arg2)
 
-    cost = pred_cost + h_forward_cost + h_inv_cost + v_forward_cost + v_inv_cost
+    # return all the costs
+    return pred_cost, h_forward_cost + v_forward_cost, h_inv_cost + v_inv_cost,\
+           h_inv_cost_pl + v_inv_cost_pl
+  #return pred_cost, h_forward_cost, h_inv_cost, v_forward_cost, v_inv_cost
+
+  def train_embedding(self, ehv_batch):
+    self.island_optimizer.zero_grad()
+    pred_cost , forward_cost , inv_cost, inv_cost_pl = self.get_costs(ehv_batch)
+    cost = pred_cost + forward_cost + inv_cost
     cost.backward()
-    self.optimizer.step()
+    self.island_optimizer.step()
+    return pred_cost, forward_cost, inv_cost, inv_cost_pl
 
-    return pred_cost, h_forward_cost, h_inv_cost, v_forward_cost, v_inv_cost
+  def train_planning(self, ehv_batch):
+    self.inv_optimizer.zero_grad()
+    pred_cost , forward_cost , inv_cost, inv_cost_pl = self.get_costs(ehv_batch)
+    cost = inv_cost_pl
+    cost.backward()
+    self.inv_optimizer.step()
+    return pred_cost, forward_cost, inv_cost, inv_cost_pl
 
   # ============================ HALPERS ============================ #
     
@@ -277,7 +309,7 @@ class PNet(nn.Module):
 if __name__ == '__main__':
 
   print ("WORDS OF ENCOURAGEMENTTT ")
-  net = PNet().cuda()
+  net = NPNet().cuda()
   xx, actions, h_batch, v_batch = gen_train_planner_batch()
 
   xx, actions = to_torch(xx), to_torch(actions)
@@ -287,37 +319,23 @@ if __name__ == '__main__':
   res = net.sample_decompose(e)
   print (res)
 
-  # train the planner for some iterations
-  for i in range(100001):
-    cost = net.train_planning(gen_train_planner_batch())
+  # train the embedding
+  for i in range(10001):
+    c_prd, c_for, c_inv, c_inv_pl = net.train_embedding(gen_train_planner_batch())
     if i % 1000 == 0:
       print ("===== a l g e b r a i c    a e s t h e t i c s ===== ", i)
-      print("cost ", cost)
+      print("cost prd", c_prd)
+      print("cost forw", c_for)
+      print("cost inv", c_inv)
+      print("cost inv pl", c_inv_pl)
       torch.save(net.state_dict(), net.model_loc) 
-    '''
-
-      bbb, h_batch, v_batch = gen_train_compose_batch()
-      bbb = to_torch(bbb)
-      bbb_rec = net.dec(net.enc(bbb))
-      # H operator
-      h_arg1, h_arg2, h_result = h_batch
-      h_arg1, h_arg2, h_result = to_torch(h_arg1), to_torch(h_arg2), to_torch(h_result)
-      h_pred = net.abstr_h(net.enc(h_arg1), net.enc(h_arg2))
-      b_rec = net.dec(h_pred)
-
-      for jjj in range(10):
-        orig_board = net.dec_to_board(net.channel_last(h_result)[jjj])
-        arg1_board = net.dec_to_board(net.channel_last(h_arg1)[jjj])
-        arg2_board = net.dec_to_board(net.channel_last(h_arg2)[jjj])
-        rec_board = net.dec_to_board(b_rec[jjj])
-        render_board(arg1_board, "algebra_board_{}_arg1.png".format(jjj))
-        render_board(arg2_board, "algebra_board_{}_arg2.png".format(jjj))
-        render_board(orig_board, "algebra_board_{}_result.png".format(jjj))
-        render_board(rec_board,  "algebra_board_{}_predict.png".format(jjj))
-
-      for jjj in range(10):
-        orig_board = net.dec_to_board(net.channel_last(bbb)[jjj])
-        rec_board = net.dec_to_board(bbb_rec[jjj])
-        render_board(orig_board, "embed_board_{}_orig.png".format(jjj))
-        render_board(rec_board, "embed_board_{}_rec.png".format(jjj))
-  '''
+  # train the inversion
+  for i in range(10001):
+    c_prd, c_for, c_inv, c_inv_pl = net.train_planning(gen_train_planner_batch())
+    if i % 1000 == 0:
+      print ("===== a l g e b r a i c    a e s t h e t i c s ===== ", i)
+      print("cost prd", c_prd)
+      print("cost forw", c_for)
+      print("cost inv", c_inv)
+      print("cost inv pl", c_inv_pl)
+      torch.save(net.state_dict(), net.model_loc) 

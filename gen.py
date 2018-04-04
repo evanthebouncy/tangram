@@ -36,7 +36,8 @@ def get_value(cell, x, y):
 
 def h_combine(left_cell, right_cell):
   (left_y, left_x), (right_y, right_x) = left_cell.shape, right_cell.shape
-  for shift in range(left_x + 1):
+  cells = []
+  for shift in reversed(range(left_x + 1)):
     new_y, new_x = max(left_y, right_y), max(left_x, right_x + shift)
     new_cell = np.zeros(shape=(new_y, new_x))
     for yy in range(new_y):
@@ -46,13 +47,16 @@ def h_combine(left_cell, right_cell):
         left_value = get_value(left_cell, left_c_x, left_c_y)
         right_value = get_value(right_cell, right_c_x, right_c_y)
         new_cell[yy][xx] = get_overlap([left_value, right_value])
-    if np.min(new_cell) >= 0:
-      return new_cell
-  assert 0, "something wrong with your h_combine"
+    
+    cells.append(new_cell)
+    if np.min(new_cell) < 0:
+      return cells[-2]
+  return cells[-1]
 
 def v_combine(top_cell, bot_cell):
   (top_y, top_x), (bot_y, bot_x) = top_cell.shape, bot_cell.shape
-  for shift in range(top_y + 1):
+  cells = []
+  for shift in reversed(range(top_y + 1)):
     new_y, new_x = max(top_y, bot_y + shift), max(top_x, bot_x)
     new_cell = np.zeros(shape=(new_y, new_x))
     for yy in range(new_y):
@@ -62,9 +66,11 @@ def v_combine(top_cell, bot_cell):
         top_value = get_value(top_cell, top_c_x, top_c_y)
         bot_value = get_value(bot_cell, bot_c_x, bot_c_y)
         new_cell[yy][xx] = get_overlap([top_value, bot_value])
-    if np.min(new_cell) >= 0:
-      return new_cell
-  assert 0, "something wrong with your v_combine"
+
+    cells.append(new_cell)
+    if np.min(new_cell) < 0:
+      return cells[-2]
+  return cells[-1]
 
 def gen_rand_board():
   return np.random.randint(6, size=(L, L))
@@ -130,6 +136,20 @@ class Piece:
       for x in range(self.cell.shape[1]):
         ret[y][x] = self.cell[y][x]
     return ret
+
+  def render(self, name):
+    render_board(self.to_board(), name)
+
+  def get_construction(self):
+    '''
+    get the construction for this piece as a string
+    '''
+    if self.p_type not in ['H','V']:
+      return "({}_{})".format(self.p_type, self.p_orientation)
+    else:
+      left = self.p_args[0].get_construction()
+      right = self.p_args[1].get_construction()
+      return "({}, {}, {})".format(self.p_type, left, right)
 
   def piece_to_np(self):
     p_type_np = [0.0, 0.0, 0.0]
