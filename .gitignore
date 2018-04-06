@@ -1,3 +1,4 @@
+renders/
 *.zip
 __pycache__/
 *.mdl
