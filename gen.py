@@ -130,10 +130,13 @@ class Piece:
   def __repr__(self):
     return str(self)
 
+  def is_same(self, other):
+    return np.all(self.to_board() == other.to_board())
+
   def to_board(self):
     ret = np.zeros(shape=(L, L))
-    for y in range(self.cell.shape[0]):
-      for x in range(self.cell.shape[1]):
+    for y in range(min(L,self.cell.shape[0])):
+      for x in range(min(L,self.cell.shape[1])):
         ret[y][x] = self.cell[y][x]
     return ret
 

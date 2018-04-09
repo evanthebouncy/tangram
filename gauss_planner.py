@@ -58,6 +58,7 @@ class GNet(nn.Module):
 
     self.all_opt = torch.optim.Adam(self.parameters(), lr=0.001)
     self.inv_supervised_opt = torch.optim.Adam(\
+      list(self.op_fc.parameters()) +
       list(self.inv_h_fc.parameters()) +
       list(self.inv_h_mu.parameters()) +
       list(self.inv_h_va.parameters()) +
@@ -117,7 +118,7 @@ class GNet(nn.Module):
     output a distribution of actions on what is to be done on e:
     one class of primitives / H / V
     '''
-    return F.softmax(self.op_fc(e), dim=1)
+    return F.softmax(self.op_fc(e) + 1e-5, dim=1)
 
   def invert_latent(self, op_type, e):
     '''
@@ -145,7 +146,7 @@ class GNet(nn.Module):
     e_large = F.relu(inv_map[op_type]['inv_fc'](e))
     # produce the mean estimate and variance estimate (variance always positive nonzro)
     mu12 = inv_map[op_type]['inv_mu'](e_large) 
-    va12 = torch.pow(inv_map[op_type]['inv_va'](e_large),2) + 1.0
+    va12 = torch.pow(inv_map[op_type]['inv_va'](e_large),2) + 0.01 
     return mu12, va12
 
   def inv_logpr(self, mu12, va12, e1, e2):
@@ -185,8 +186,12 @@ class GNet(nn.Module):
 
     # otherwise, perform decomposition into the sub-goals
     else:
-      # TODO: sample with actual gaussian plz?
-      e1e2, r = self.invert_latent(op_pred, e)
+      # go to numpy sample from the gaussian OH YEAH
+      mu, va = self.invert_latent(op_pred, e)
+      va = va.expand(mu.size())
+      mu, va = mu[0].data.cpu().numpy(), va[0].data.cpu().numpy()
+      e1e2 = np.random.normal(mu, va)
+      e1e2 = to_torch(e1e2).unsqueeze(0)
       e1, e2 = torch.split(e1e2, n_hidden, dim=1)
       return op_pred, e1, e2
     assert 0, "should not happen blyat!"
@@ -226,26 +231,32 @@ class GNet(nn.Module):
   # Phase 2: Train a supervised gaussian but fixing the embedding weights 
   def train_supervised(self, ehv_batch):
     bb, aa, h_batch, v_batch = ehv_batch
+    # action prediction
+    bb, aa = to_torch(bb), to_torch(aa)
+    aa_pred = self.predict_op(self.enc(bb))
+    action_pred_cost = xentropy_cost(aa, aa_pred)
+
     # H operator
     h_1, h_2, h = h_batch
     h_1, h_2, h = to_torch(h_1), to_torch(h_2), to_torch(h)
     h_e1, h_e2, h_e = self.enc(h_1), self.enc(h_2), self.enc(h)
     h_mu12, h_va12 = self.invert_latent('H', h_e)
     h_logpr = self.inv_logpr(h_mu12, h_va12, h_e1, h_e2)
-
+    # V operator
     v_1, v_2, v = v_batch
     v_1, v_2, v = to_torch(v_1), to_torch(v_2), to_torch(v)
     v_e1, v_e2, v_e = self.enc(v_1), self.enc(v_2), self.enc(v)
     v_mu12, v_va12 = self.invert_latent('V', v_e)
     v_logpr = self.inv_logpr(v_mu12, v_va12, v_e1, v_e2)
 
-    supervised_cost = -(torch.sum(h_logpr) + torch.sum(v_logpr))
+    inversion_cost = -(torch.sum(h_logpr) + torch.sum(v_logpr))
+    supervised_cost = action_pred_cost + inversion_cost
 
     self.inv_supervised_opt.zero_grad()
     supervised_cost.backward()
     self.inv_supervised_opt.step()
 
-    return supervised_cost
+    return action_pred_cost, inversion_cost
 
 if __name__ == '__main__':
 
@@ -267,9 +278,10 @@ if __name__ == '__main__':
   # phase 2: train the supervised inversion (gaussian)
   # -------  to prevent collapse of treasure island, freeze the embeddings
   for i in range(n_train_sup):
-    c_inv = net.train_supervised(gen_train_planner_batch())
+    c_pred, c_inv = net.train_supervised(gen_train_planner_batch())
     if i % 1000 == 0:
       print ("===== a l g e b r a i c    a e s t h e t i c s ===== ", i)
+      print ("cost action pred ", c_pred)
       print ("cost inv ", c_inv)
       torch.save(net.state_dict(), net.model_loc) 
 
