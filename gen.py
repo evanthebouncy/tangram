@@ -140,15 +140,15 @@ class Piece:
   def render(self, name):
     render_board(self.to_board(), name)
 
-  def get_construction(self):
+  def get_construction_str(self):
     '''
     get the construction for this piece as a string
     '''
     if self.p_type not in ['H','V']:
       return "({}_{})".format(self.p_type, self.p_orientation)
     else:
-      left = self.p_args[0].get_construction()
-      right = self.p_args[1].get_construction()
+      left = self.p_args[0].get_construction_str()
+      right = self.p_args[1].get_construction_str()
       return "({}, {}, {})".format(self.p_type, left, right)
 
   def piece_to_np(self):

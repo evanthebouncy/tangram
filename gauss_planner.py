@@ -145,26 +145,25 @@ class GNet(nn.Module):
     e_large = F.relu(inv_map[op_type]['inv_fc'](e))
     # produce the mean estimate and variance estimate (variance always positive nonzro)
     mu12 = inv_map[op_type]['inv_mu'](e_large) 
-
-    # debug this how can this be negative
-    va12 = torch.pow(inv_map[op_type]['inv_va'](e_large),2) + 0.01
-    if random.random() < 0.01:
-      print (va12)
-    # print (va12.size())
-    # print (va12[:4])
-    # va12 = to_torch(np.array([1.0])).expand(mu12.size()[0])
-    va12_other = to_torch(np.array([0.5])).expand(mu12.size()[0])
-    if random.random() < 0.01:
-      print (va12_other)
-    # assert va12.size() == va12_other.size(), str(va12.size()) + " " + str(va12_other.size())
-    return mu12, va12_other
+    va12 = torch.pow(inv_map[op_type]['inv_va'](e_large),2) + 1.0
+    return mu12, va12
 
   def inv_logpr(self, mu12, va12, e1, e2):
     va12 = va12.contiguous().view(-1)
     e12 = torch.cat((e1, e2), dim=1)
     diff = torch.sum(torch.pow(e12 - mu12, 2), dim=1)
     assert diff.size() == va12.size()
-    logpr = -((n_hidden * 2) * torch.log(va12) + diff / torch.pow(va12, 2))
+    first  = (n_hidden * 2) / 2 * torch.log(va12)
+    second = diff / torch.pow(va12, 2)
+    logpr  = -(first + second)
+    #logpr = -((n_hidden * 2) * torch.log(va12) + diff / torch.pow(va12, 2))
+    # if random.random() < 0.01:
+    #   print ("diff")
+    #   print (diff)
+    #   print ("first", first)
+    #   print ("second", second)
+    #   print ("logpr", logpr)
+
     # print (logpr.size())
     return logpr
     
@@ -186,8 +185,8 @@ class GNet(nn.Module):
 
     # otherwise, perform decomposition into the sub-goals
     else:
+      # TODO: sample with actual gaussian plz?
       e1e2, r = self.invert_latent(op_pred, e)
-      print ("radius 4Head ", r)
       e1, e2 = torch.split(e1e2, n_hidden, dim=1)
       return op_pred, e1, e2
     assert 0, "should not happen blyat!"
@@ -252,7 +251,7 @@ if __name__ == '__main__':
 
   print ("WORDS OF ENCOURAGEMENTTT ")
   net = GNet().cuda()
-  n_train_emb = 1001
+  n_train_emb = 5001
   n_train_sup = 5001
   n_train_RL  = 5001
 

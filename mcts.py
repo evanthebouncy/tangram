@@ -9,7 +9,7 @@ import torch.nn.functional as F
 from constants import *
 from utils import *
 
-from nondet_planner import *
+from gauss_planner import *
 
 class MCTS:
 
@@ -28,13 +28,13 @@ class MCTS:
     if op not in ['H', 'V']:
       p_type, orientation = op
       to_ret = Piece(p_type, orientation, [])
-      to_ret.render(to_ret.get_construction())
+      to_ret.render(to_ret.get_construction_str()+".png")
       return to_ret
     else:
       part1 = self.recursive_search(e1)
       part2 = self.recursive_search(e2)
       to_ret = Piece(op, 0, [part1, part2])
-      to_ret.render(to_ret.get_construction())
+      to_ret.render(to_ret.get_construction_str()+".png")
       return to_ret
 
 def test_mcts1(mcts):
@@ -70,7 +70,7 @@ def test_mcts1(mcts):
 
 
 if __name__ == "__main__":
-  pnet = NPNet().cuda()
+  pnet = GNet().cuda()
   model_loc = pnet.model_loc
   pnet.load_state_dict(torch.load(model_loc))
   mcts = MCTS(pnet)
