@@ -69,8 +69,9 @@ def gen_train_compose_batch(n=20):
          (np.array(h_arg1), np.array(h_arg2), np.array(h_result)),\
          (np.array(v_arg1), np.array(v_arg2), np.array(v_result))
 
-def gen_train_planner():
-  tangram = gen_rand_tangram(SHAPES)
+def gen_train_planner(size, tangram = None):
+  gram_subset = np.random.choice(SHAPES, size, replace=False)
+  tangram = gen_rand_tangram(gram_subset) if tangram is None else tangram
   actions = []
   h_compose = []
   v_compose = []
@@ -99,8 +100,8 @@ def gen_train_planner():
 
   return actions, h_compose, v_compose
 
-def gen_train_planner_batch(n=20):
-  stuffs = [gen_train_planner() for _ in range(n)]
+def gen_train_planner_batch(size, n=20, stuffs=[]):
+  stuffs = [gen_train_planner(size) for _ in range(n)] if stuffs == [] else stuffs
   embeds = []
   actions = []
   h_arg1, h_arg2, h_result = [],[],[]
@@ -123,6 +124,53 @@ def gen_train_planner_batch(n=20):
   return np.array(embeds), np.array(actions),\
          (np.array(h_arg1), np.array(h_arg2), np.array(h_result)),\
          (np.array(v_arg1), np.array(v_arg2), np.array(v_result))
+
+def self_supervise(tangram, agent):
+  '''
+  given a tangram, if it is solvable by the agent, use agent's proposal as supervision
+  if not, use just enough supervision on top level
+  '''
+  def _self_supervise(gram):
+    board = gram.to_board()
+    succ, result = agent.n_search(board)
+    # return the result suggested by the agent if the agent has an idea
+    if succ:
+      # print('succ')
+      return result
+    # otherwise, recursively tries to still use the agent as much as possible
+    else:
+      # print('fail')
+      # agent you fucking debil fuck up the primitive, oh well
+      if gram.p_args == []:
+        return gram
+      else:
+        op = gram.p_type
+        arg1, arg2 = gram.p_args
+        arg1_result = _self_supervise(arg1)
+        arg2_result = _self_supervise(arg2)
+        return Piece(op, 0, [arg1_result, arg2_result]) 
+  return [_self_supervise(tangram)]
+
+#   board = tangram.to_board()
+#   succ, result = agent.n_search(board)
+#   if succ:
+#     return [result]
+#   else:
+#     # return [_self_supervise(tangram), _self_supervise(result)]
+#     return [_self_supervise(tangram)]
+  
+  # return _self_supervise(tangram)
+
+def gen_train_RL(size, agent):
+  gram_subset = np.random.choice(SHAPES, size, replace=False)
+  tangram = gen_rand_tangram(gram_subset)
+  tangram_recs = self_supervise(tangram, agent)
+  return [gen_train_planner(0, tangram = tangram_rec) for tangram_rec in tangram_recs]
+
+def gen_train_RL_batch(size, agent, n=20):
+  # super hack joining list of list O_O
+  stuffs = sum([gen_train_RL(size, agent) for _ in range(n)],[])
+  return gen_train_planner_batch(0, stuffs=stuffs)
 
 # ==================== tests ===================
 def test_np():

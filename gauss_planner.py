@@ -118,7 +118,7 @@ class GNet(nn.Module):
     output a distribution of actions on what is to be done on e:
     one class of primitives / H / V
     '''
-    return F.softmax(self.op_fc(e) + 1e-5, dim=1)
+    return F.softmax(self.op_fc(e), dim=1) + 1e-5
 
   def invert_latent(self, op_type, e):
     '''
@@ -146,7 +146,7 @@ class GNet(nn.Module):
     e_large = F.relu(inv_map[op_type]['inv_fc'](e))
     # produce the mean estimate and variance estimate (variance always positive nonzro)
     mu12 = inv_map[op_type]['inv_mu'](e_large) 
-    va12 = torch.pow(inv_map[op_type]['inv_va'](e_large),2) + 0.01 
+    va12 = torch.pow(inv_map[op_type]['inv_va'](e_large),2) + 0.001 
     return mu12, va12
 
   def inv_logpr(self, mu12, va12, e1, e2):
@@ -195,6 +195,35 @@ class GNet(nn.Module):
       e1, e2 = torch.split(e1e2, n_hidden, dim=1)
       return op_pred, e1, e2
     assert 0, "should not happen blyat!"
+
+  def search(self, board):
+    b = to_torch(np.array([board_to_np(board)]))
+    e = self.enc(b)
+    return self.recursive_search(e)
+
+  def recursive_search(self, e):
+    op, e1, e2 = self.sample_decompose(e)
+    if op not in ['H', 'V']:
+      p_type, orientation = op
+      to_ret = Piece(p_type, orientation, [])
+      return to_ret
+    else:
+      part1 = self.recursive_search(e1)
+      part2 = self.recursive_search(e2)
+      to_ret = Piece(op, 0, [part1, part2])
+      return to_ret
+
+  def n_search(self, board):
+    top_score, top_gram = 0, None
+    for i in range(3):
+      result = self.search(board)
+      cur_score = np.sum(result.to_board() == board)
+      if cur_score > top_score:
+        top_score, top_gram = cur_score, result
+      if np.all(result.to_board() == board):
+        # print ("found at ", i)
+        return True, result
+    return False, top_gram
 
   # ====================== TRAINING PROCEDURE =================== #
 
@@ -258,17 +287,15 @@ class GNet(nn.Module):
 
     return action_pred_cost, inversion_cost
 
-if __name__ == '__main__':
-
+# ============================== the main hooks ===========================
+def run_train_supervised(net):
   print ("WORDS OF ENCOURAGEMENTTT ")
-  net = GNet().cuda()
-  n_train_emb = 5001
-  n_train_sup = 5001
-  n_train_RL  = 5001
+  n_train_emb = 10001
+  n_train_sup = 10001
 
   # phase 1: train the embedding
   for i in range(n_train_emb):
-    c_dec, c_algebra = net.train_embedding(gen_train_planner_batch())
+    c_dec, c_algebra = net.train_embedding(gen_train_planner_batch(len(SHAPES)))
     if i % 1000 == 0:
       print ("===== a l g e b r a i c   e m b   a e s t h e t i c s ===== ", i)
       print("cost dec", c_dec)
@@ -278,12 +305,59 @@ if __name__ == '__main__':
   # phase 2: train the supervised inversion (gaussian)
   # -------  to prevent collapse of treasure island, freeze the embeddings
   for i in range(n_train_sup):
-    c_pred, c_inv = net.train_supervised(gen_train_planner_batch())
+    c_pred, c_inv = net.train_supervised(gen_train_planner_batch(len(SHAPES)))
     if i % 1000 == 0:
       print ("===== a l g e b r a i c    a e s t h e t i c s ===== ", i)
       print ("cost action pred ", c_pred)
       print ("cost inv ", c_inv)
       torch.save(net.state_dict(), net.model_loc) 
 
+def run_train_RL(net, n_pieces):
   # phase 3: trian the RL inversion (specialized gaussian)
-  # -------  here we can un-freeze the embeddings
+  # -------  here we keep the embedding frozen as well
+  while True:
+    performance = run_test(net, n_pieces)
+    print (" ======================= performance ", n_pieces, " ", performance,\
+           "=======================" )
+    if performance > 0.95:
+      print ("performance sufficient !")
+      return
+    for i in range(101):
+      c_pred, c_inv = net.train_supervised(gen_train_RL_batch(n_pieces, net))
+      if i % 10 == 0:
+        print ("===== R   L   a e s t h e t i c s ===== ", i)
+        print ("cost action pred ", c_pred)
+        print ("cost inv ", c_inv)
+        torch.save(net.state_dict(), net.model_loc) 
+
+def run_test(pnet, size):
+  N_TEST = 100
+  succ = 0
+  for i in range(N_TEST):
+    gram_subset = np.random.choice(SHAPES, size, replace=False)
+    tangram = gen_rand_tangram(gram_subset)
+    success, result = pnet.n_search(tangram.to_board())
+    if success:
+      succ += 1
+    else:
+      # print ("failed on this shape")
+      # print (tangram)
+      # print ("best guess is this shape")
+      # print (result)
+      # print ("can succeed on this shape?")
+      suc1, res1 = pnet.n_search(result.to_board())
+      # print (suc1)
+      # print (res1)
+  return succ / N_TEST
+
+if __name__ == '__main__':
+  pnet = GNet().cuda()
+  pnet.load_state_dict(torch.load(pnet.model_loc))
+  print (run_test(pnet, 2))
+  #run_train_supervised(pnet)
+  #run_train_RL(pnet, 1)
+  #run_train_RL(pnet, 2)
+  #run_train_RL(pnet, 3)
+  #run_train_RL(pnet, 4)
+
+
