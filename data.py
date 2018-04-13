@@ -172,6 +172,32 @@ def gen_train_RL_batch(size, agent, n=20):
   stuffs = sum([gen_train_RL(size, agent) for _ in range(n)],[])
   return gen_train_planner_batch(0, stuffs=stuffs)
 
+class BatchRL:
+  '''
+  keep a batch of all past supervisions and see if it works out OH YEAH
+  '''
+  def __init__(self):
+    self.buff = dict()
+
+  def count_unique(self):
+    return len(self.buff)
+    
+  def sample_train_batch(self, batch_size):
+    grams = list(self.buff.values())
+    train_RLs = random.sample(grams, batch_size)
+    train_RLs = [gen_train_planner(0, tangram = tr_rl) for tr_rl in train_RLs]
+    return gen_train_planner_batch(0, stuffs=train_RLs)
+
+  def collect_train_sample(self, size, agent):
+    gram_subset = np.random.choice(SHAPES, size, replace=False)
+    tangram = gen_rand_tangram(gram_subset)
+    tangram_recs = self_supervise(tangram, agent)
+    for t_r in tangram_recs:
+      t_r_key = str(t_r.to_board())
+      self.buff[t_r_key] = t_r
+
+
+
 # ==================== tests ===================
 def test_np():
   board = gen_rand_sized_tangram(SHAPES).to_board()

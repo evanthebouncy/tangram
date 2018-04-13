@@ -145,8 +145,10 @@ class GNet(nn.Module):
     # we first enlarge the encoding to a large hidden dimension to get ready
     e_large = F.relu(inv_map[op_type]['inv_fc'](e))
     # produce the mean estimate and variance estimate (variance always positive nonzro)
-    mu12 = inv_map[op_type]['inv_mu'](e_large) 
-    va12 = torch.pow(inv_map[op_type]['inv_va'](e_large),2) + 0.001 
+    mu12 = F.sigmoid(inv_map[op_type]['inv_mu'](e_large) )
+    # va12 = torch.pow(inv_map[op_type]['inv_va'](e_large),2) + 0.001 
+    va12 = torch.sigmoid(inv_map[op_type]['inv_va'](e_large))
+
     return mu12, va12
 
   def inv_logpr(self, mu12, va12, e1, e2):
@@ -166,6 +168,16 @@ class GNet(nn.Module):
     #   print ("logpr", logpr)
 
     # print (logpr.size())
+    if random.random() < 0.001:
+      print ("rare print")
+      print ("mu")
+      print (mu12)
+      print ("va")
+      print (va12)
+      print ("e12")
+      print (e12)
+      print ("diff")
+      print (diff)
     return logpr
     
   def sample_decompose(self, e):
@@ -291,7 +303,7 @@ class GNet(nn.Module):
 def run_train_supervised(net):
   print ("WORDS OF ENCOURAGEMENTTT ")
   n_train_emb = 10001
-  n_train_sup = 10001
+  n_train_sup = 3001
 
   # phase 1: train the embedding
   for i in range(n_train_emb):
@@ -307,7 +319,7 @@ def run_train_supervised(net):
   for i in range(n_train_sup):
     c_pred, c_inv = net.train_supervised(gen_train_planner_batch(len(SHAPES)))
     if i % 1000 == 0:
-      print ("===== a l g e b r a i c    a e s t h e t i c s ===== ", i)
+      print ("===== s u p e r v i s e d    a e s t h e t i c s ===== ", i)
       print ("cost action pred ", c_pred)
       print ("cost inv ", c_inv)
       torch.save(net.state_dict(), net.model_loc) 
@@ -328,6 +340,35 @@ def run_train_RL(net, n_pieces):
         print ("===== R   L   a e s t h e t i c s ===== ", i)
         print ("cost action pred ", c_pred)
         print ("cost inv ", c_inv)
+        torch.save(net.state_dict(), net.model_loc) 
+
+def run_train_batch_RL(net, n_pieces):
+  # phase 3: trian the RL inversion (specialized gaussian)
+  # -------  here we keep the embedding frozen as well
+  batch = BatchRL()
+  for i in range(100):
+    batch.collect_train_sample(3, pnet)
+  for iterrr in range(100000000):
+    per1 = run_test(net, 1)
+    per2 = run_test(net, 2)
+    per3 = run_test(net, 3)
+    print (" ============= performance ", [per1, per2, per3],\
+           " =============" )
+    if per3 > 0.95:
+      print ("performance sufficient !")
+      return
+    for i in range(1001):
+      batch.collect_train_sample(3, pnet)
+      c_pred, c_inv = net.train_supervised(batch.sample_train_batch(20))
+      if i % 500 == 0:
+        a_samples = list(batch.buff.values())[-10:]
+        for jjj, sample in enumerate(a_samples):
+          render_board(sample.to_board(), "sample_{}_{}.png".format(iterrr, jjj)) 
+        print ("===== R   L   a e s t h e t i c s ===== ", i)
+        print ("cost action pred ", c_pred)
+        print ("cost inv ", c_inv)
+        print ("buffer size ", len(batch.buff))
+        print ("unique size ", batch.count_unique())
         torch.save(net.state_dict(), net.model_loc) 
 
 def run_test(pnet, size):
@@ -352,9 +393,11 @@ def run_test(pnet, size):
 
 if __name__ == '__main__':
   pnet = GNet().cuda()
-  pnet.load_state_dict(torch.load(pnet.model_loc))
-  print (run_test(pnet, 2))
-  #run_train_supervised(pnet)
+  # pnet.load_state_dict(torch.load(pnet.model_loc))
+  # print (run_test(pnet, 2))
+  run_train_supervised(pnet)
+  run_train_batch_RL(pnet, 3)
+
   #run_train_RL(pnet, 1)
   #run_train_RL(pnet, 2)
   #run_train_RL(pnet, 3)
