@@ -1,3 +1,4 @@
+import cv2
 from gen import *
 from data import *
 
@@ -48,21 +49,25 @@ class GNet(nn.Module):
     self.op_fc = nn.Linear(n_hidden, len(ACTIONS))
 
     # for predicting the e1 e2, one per kind of decomposition
-    self.inv_h_fc = nn.Linear(n_hidden, large_hidden)
+    self.inv_h_fc1 = nn.Linear(n_hidden, large_hidden)
+    self.inv_h_fc2 = nn.Linear(large_hidden, large_hidden)
     self.inv_h_mu = nn.Linear(large_hidden, 2 * n_hidden)
     self.inv_h_va = nn.Linear(large_hidden, 1)
 
-    self.inv_v_fc = nn.Linear(n_hidden, large_hidden)
+    self.inv_v_fc1 = nn.Linear(n_hidden, large_hidden)
+    self.inv_v_fc2 = nn.Linear(large_hidden, large_hidden)
     self.inv_v_mu = nn.Linear(large_hidden, 2 * n_hidden)
     self.inv_v_va = nn.Linear(large_hidden, 1)
 
     self.all_opt = torch.optim.Adam(self.parameters(), lr=0.001)
     self.inv_supervised_opt = torch.optim.Adam(\
       list(self.op_fc.parameters()) +
-      list(self.inv_h_fc.parameters()) +
+      list(self.inv_h_fc1.parameters()) +
+      list(self.inv_h_fc2.parameters()) +
       list(self.inv_h_mu.parameters()) +
       list(self.inv_h_va.parameters()) +
-      list(self.inv_v_fc.parameters()) +
+      list(self.inv_v_fc1.parameters()) +
+      list(self.inv_v_fc2.parameters()) +
       list(self.inv_v_mu.parameters()) +
       list(self.inv_v_va.parameters()),
       lr = 0.001)
@@ -131,19 +136,22 @@ class GNet(nn.Module):
 
     inv_map = {
         'H' : {
-            'inv_fc' : self.inv_h_fc,
+            'inv_fc1' : self.inv_h_fc1,
+            'inv_fc2' : self.inv_h_fc2,
             'inv_mu' : self.inv_h_mu,
             'inv_va' : self.inv_h_va,
           },
         'V' : {
-            'inv_fc' : self.inv_v_fc,
+            'inv_fc1' : self.inv_v_fc1,
+            'inv_fc2' : self.inv_v_fc2,
             'inv_mu' : self.inv_v_mu,
             'inv_va' : self.inv_v_va,
           }
         }
     
     # we first enlarge the encoding to a large hidden dimension to get ready
-    e_large = F.relu(inv_map[op_type]['inv_fc'](e))
+    e_large = F.relu(inv_map[op_type]['inv_fc1'](e))
+    e_large = F.relu(inv_map[op_type]['inv_fc2'](e_large))
     # produce the mean estimate and variance estimate (variance always positive nonzro)
     mu12 = F.sigmoid(inv_map[op_type]['inv_mu'](e_large) )
     # va12 = torch.pow(inv_map[op_type]['inv_va'](e_large),2) + 0.001 
@@ -213,21 +221,24 @@ class GNet(nn.Module):
     e = self.enc(b)
     return self.recursive_search(e)
 
-  def recursive_search(self, e):
+  def recursive_search(self, e, depth=0):
+    # early stop
+    if depth > 5:
+      return Piece('1', 1, [])
     op, e1, e2 = self.sample_decompose(e)
     if op not in ['H', 'V']:
       p_type, orientation = op
       to_ret = Piece(p_type, orientation, [])
       return to_ret
     else:
-      part1 = self.recursive_search(e1)
-      part2 = self.recursive_search(e2)
+      part1 = self.recursive_search(e1, depth+1)
+      part2 = self.recursive_search(e2, depth+1)
       to_ret = Piece(op, 0, [part1, part2])
       return to_ret
 
   def n_search(self, board):
     top_score, top_gram = 0, None
-    for i in range(3):
+    for i in range(10):
       result = self.search(board)
       cur_score = np.sum(result.to_board() == board)
       if cur_score > top_score:
@@ -293,6 +304,11 @@ class GNet(nn.Module):
     inversion_cost = -(torch.sum(h_logpr) + torch.sum(v_logpr))
     supervised_cost = action_pred_cost + inversion_cost
 
+    # unfreeze the encoding *gasp* shit doesn't work LUL
+    # self.all_opt.zero_grad()
+    # supervised_cost.backward()
+    # self.all_opt.step()
+
     self.inv_supervised_opt.zero_grad()
     supervised_cost.backward()
     self.inv_supervised_opt.step()
@@ -302,8 +318,8 @@ class GNet(nn.Module):
 # ============================== the main hooks ===========================
 def run_train_supervised(net):
   print ("WORDS OF ENCOURAGEMENTTT ")
-  n_train_emb = 10001
-  n_train_sup = 3001
+  n_train_emb = 4001
+  n_train_sup = 4001
 
   # phase 1: train the embedding
   for i in range(n_train_emb):
@@ -312,6 +328,7 @@ def run_train_supervised(net):
       print ("===== a l g e b r a i c   e m b   a e s t h e t i c s ===== ", i)
       print("cost dec", c_dec)
       print("cost algebra", c_algebra)
+      print("saving model")
       torch.save(net.state_dict(), net.model_loc) 
 
   # phase 2: train the supervised inversion (gaussian)
@@ -322,6 +339,7 @@ def run_train_supervised(net):
       print ("===== s u p e r v i s e d    a e s t h e t i c s ===== ", i)
       print ("cost action pred ", c_pred)
       print ("cost inv ", c_inv)
+      print ("saving model ")
       torch.save(net.state_dict(), net.model_loc) 
 
 def run_train_RL(net, n_pieces):
@@ -347,20 +365,19 @@ def run_train_batch_RL(net, n_pieces):
   # -------  here we keep the embedding frozen as well
   batch = BatchRL()
   for i in range(100):
-    batch.collect_train_sample(3, pnet)
+    batch.collect_train_sample(n_pieces, pnet)
   for iterrr in range(100000000):
-    per1 = run_test(net, 1)
-    per2 = run_test(net, 2)
-    per3 = run_test(net, 3)
-    print (" ============= performance ", [per1, per2, per3],\
+    pers = [run_test(net, iii+ 1) for iii in range(5)]
+    print ("iteration ", iterrr)
+    print (" ============= performance ", pers,\
            " =============" )
-    if per3 > 0.95:
+    if pers[-1] > 0.95:
       print ("performance sufficient !")
       return
-    for i in range(1001):
-      batch.collect_train_sample(3, pnet)
+    for i in range(1000):
+      batch.collect_train_sample(n_pieces, pnet)
       c_pred, c_inv = net.train_supervised(batch.sample_train_batch(20))
-      if i % 500 == 0:
+      if i % 1000 == 0:
         a_samples = list(batch.buff.values())[-10:]
         for jjj, sample in enumerate(a_samples):
           render_board(sample.to_board(), "sample_{}_{}.png".format(iterrr, jjj)) 
@@ -380,6 +397,11 @@ def run_test(pnet, size):
     success, result = pnet.n_search(tangram.to_board())
     if success:
       succ += 1
+      # print ("heya")
+      # print (tangram.get_construction_str())
+      # print (result.get_construction_str())
+      render_board(tangram.to_board(), "{}_orig.png".format(succ))
+      render_board(result.to_board(), "{}_result.png".format(succ))
     else:
       # print ("failed on this shape")
       # print (tangram)
@@ -393,10 +415,12 @@ def run_test(pnet, size):
 
 if __name__ == '__main__':
   pnet = GNet().cuda()
-  # pnet.load_state_dict(torch.load(pnet.model_loc))
-  # print (run_test(pnet, 2))
-  run_train_supervised(pnet)
-  run_train_batch_RL(pnet, 3)
+  pnet.load_state_dict(torch.load(pnet.model_loc))
+  # print (run_test(pnet, 1))
+  print (run_test(pnet, 2))
+  print (run_test(pnet, 3))
+  # run_train_supervised(pnet)
+  # run_train_batch_RL(pnet, 5)
 
   #run_train_RL(pnet, 1)
   #run_train_RL(pnet, 2)

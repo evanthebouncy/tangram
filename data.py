@@ -177,7 +177,9 @@ class BatchRL:
   keep a batch of all past supervisions and see if it works out OH YEAH
   '''
   def __init__(self):
+    self.buff_keys = []
     self.buff = dict()
+    self.buff_len = 100000
 
   def count_unique(self):
     return len(self.buff)
@@ -194,7 +196,15 @@ class BatchRL:
     tangram_recs = self_supervise(tangram, agent)
     for t_r in tangram_recs:
       t_r_key = str(t_r.to_board())
-      self.buff[t_r_key] = t_r
+      if t_r_key not in self.buff:
+        self.buff[t_r_key] = t_r
+        self.buff_keys.append(t_r_key)
+
+    if len(self.buff_keys) > self.buff_len:
+      to_delete, self.buff_keys = self.buff_keys[:100], self.buff_keys[100:]
+      for to_del in to_delete:
+        del self.buff[to_del]
+
 
 
 

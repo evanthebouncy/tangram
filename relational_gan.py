@@ -1,4 +1,3 @@
-import cv2
 from gen import *
 from data import *
 
@@ -18,6 +17,7 @@ overall scheme : train a GAN that work as follows
 2) the discriminator that takes x1 x2 y and tell if it is real or not
 '''
 
+# =================================== NETWORK MODELS ===================================
 # the backward function that decompose shapes
 class Gen(nn.Module):
 
@@ -40,6 +40,9 @@ class Gen(nn.Module):
     self.inv_h_fc2 = nn.Linear(large_hidden, 2 * n_hidden)
     self.inv_v_fc1 = nn.Linear(n_hidden, large_hidden)
     self.inv_v_fc2 = nn.Linear(large_hidden, 2 * n_hidden)
+
+    lr = 0.0002
+    self.opt = torch.optim.Adam(self.parameters(), lr=lr)
 
   def enc(self, x):
     '''
@@ -86,7 +89,7 @@ class Gen(nn.Module):
     e1, e2 = torch.split(e1e2, n_hidden, dim=1)
     return e1, e2
 
-  def invert(self, op_type, x):
+  def forward(self, op_type, x):
     e = self.enc(x)
     e1, e2 = self.invert_latent(op_type, e)
     x1, x2 = self.dec(e1), self.dec(e2)
@@ -109,6 +112,9 @@ class Dis(nn.Module):
     self.discrim_h = nn.Linear(n_hidden * 3, 1)
     self.discrim_v = nn.Linear(n_hidden * 3, 1)
 
+    lr = 0.0002
+    self.opt = torch.optim.Adam(self.parameters(), lr=lr)
+
   def enc(self, x):
     '''
     the x input here is encoded as batch x channel x L x L
@@ -121,14 +127,13 @@ class Dis(nn.Module):
     e = F.sigmoid(self.enc_fc2(x))
     return e
 
-  def discrim(self, op_type, x, x1, x2):
+  def forward(self, op_type, x, x1, x2):
     dis_map = {
         'H' : self.discrim_h,
         'V' : self.discrim_v,
         }
     e, e1, e2 = self.enc(x), self.enc(x1), self.enc(x2)
     ee1e2 = torch.cat( (e,e1,e2), 1 )
-    print (ee1e2.size())
     return F.sigmoid(dis_map[op_type](ee1e2))
 
 # draws the first of the batch from these fools
@@ -145,34 +150,92 @@ def draw_stuff(op_type, x, x1, x2, x1_rec, x2_rec):
   render_board(*x1_rec_board)
   render_board(*x2_rec_board)
 
+# ======================= TRAINING PROCEDURES =========================
+criterion = nn.BCELoss()
+
+def train_generator(gen, dis_score):
+  real_labels = Variable(torch.ones(dis_score.size()).cuda())
+  gen.zero_grad()
+  g_loss = criterion(dis_score, real_labels)
+  g_loss.backward()
+  gen.opt.step()
+  return g_loss
+
+def train_discriminator(dis, real_tuples, fake_tuples, m):
+  real_labels = Variable(torch.ones( (m,1)).cuda())
+  fake_labels = Variable(torch.zeros((m,1)).cuda())
+
+  dis.zero_grad()
+
+  outputs = dis(*real_tuples)
+  real_loss = criterion(outputs, real_labels)
+  real_score = outputs
+  
+  outputs = dis(*fake_tuples)
+  fake_loss = criterion(outputs, fake_labels)
+  fake_score = outputs
+
+  d_loss = real_loss + fake_loss
+  d_loss.backward()
+  dis.opt.step()
+  return d_loss, real_score, fake_score
+
 if __name__ == '__main__':
   gen = Gen().cuda()
   dis = Dis().cuda()
 
-  print (gen)
-  print (dis)
+  for i in range(10000):
+    # step 0 : sample a batch of decompositions
+    a_batch = gen_train_planner_batch(len(SHAPES))
+    bb, aa, h_batch, v_batch = a_batch
 
-  a_batch = gen_train_planner_batch(len(SHAPES))
-  bb, aa, h_batch, v_batch = a_batch
-  print (h_batch)
+    # ------------------- train the H decomposition -------------------
+    h1, h2, h = h_batch
+    h1, h2, h = to_torch(h1), to_torch(h2), to_torch(h)
 
-  h1, h2, h = h_batch
-  h1, h2, h = to_torch(h1), to_torch(h2), to_torch(h)
+    # step 1 : sample a reconstruction from generator
+    h1_rec, h2_rec =  gen('H', h)
+    # step 1.1 : flip the channel so they can be inputted agian
+    h1_rec_ch, h2_rec_ch = out_to_in(h1_rec), out_to_in(h2_rec)
 
-  h1_rec, h2_rec =  gen.invert('H', h)
-  draw_stuff("H", h, h1, h2, h1_rec, h2_rec)
+    # step 2 : get the score of the discriminator
+    dis_score = dis('H', h, h1_rec_ch, h2_rec_ch) 
 
-  dis1 = dis.discrim('H', h, h1, h2) 
+    # step 3 : train the generator on the discrim score
+    g_loss = train_generator(gen, dis_score)
 
-  print (h1_rec.size())
-  h1_rec_ch = out_to_in(h1_rec)
-  h2_rec_ch = out_to_in(h2_rec)
+    # step 4 : train the discriminator
+    # step 4.1 : re-sample a reconstruction from generator
+    h1_rec, h2_rec =  gen('H', h)
+    h1_rec_ch, h2_rec_ch = out_to_in(h1_rec), out_to_in(h2_rec)
+    # step 4.2 : construct the real and fake tuples and train
+    tup_real = ('H', h, h1, h2) 
+    tup_fake = ('H', h, h1_rec_ch, h2_rec_ch)
+    m = len(h)
+    d_loss, real_score, fake_score = train_discriminator(dis, tup_real, tup_fake, m)
 
-  dis2 = dis.discrim('H', h, h1_rec_ch, h2_rec_ch)
+    # print some statistics
+    if i % 200 == 0:
+      print (i, g_loss, d_loss)
+      draw_stuff("H", h, h1, h2, h1_rec, h2_rec)
 
-  print (dis1, dis2)
-
-  assert 0, "asdf"
+#     print (h1_rec.size())
+#     h1_rec_ch = out_to_in(h1_rec)
+#     h2_rec_ch = out_to_in(h2_rec)
+# 
+#     dis2 = dis('H', h, h1_rec_ch, h2_rec_ch)
+# 
+# 
+#     print (dis1, dis2)
+# 
+#     tup_real = ('H', h, h1, h2) 
+#     tup_fake = ('H', h, h1_rec_ch, h2_rec_ch)
+#     m = len(h)
+# 
+#     print (train_discriminator(dis, tup_real, tup_fake, m)[0])
+# 
+# 
+#   assert 0, "asdf"
 
 
 

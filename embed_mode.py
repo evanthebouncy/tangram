@@ -1,3 +1,4 @@
+import cv2
 from gen import *
 from data import *
 
